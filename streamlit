@@ -1,0 +1,294 @@
+import streamlit as st
+import os
+import joblib
+import numpy as np
+
+# Load the trained model and scaler
+model = joblib.load("sepsis_model.pkl")
+scaler = joblib.load("scaler.pkl")
+
+# File to store user credentials
+USER_FILE = "users.txt"
+
+# Function to read user credentials
+def read_users():
+    if not os.path.exists(USER_FILE):
+        return {}
+    users = {}
+    with open(USER_FILE, "r") as file:
+        for line in file:
+            line = line.strip()
+            if "," in line:
+                username, password = line.split(",", 1)
+                users[username] = password
+    return users
+
+# Function to save new user credentials
+def save_user(username, password):
+    with open(USER_FILE, "a") as file:
+        file.write(f"{username},{password}\n")
+
+# Initialize session state
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = ""
+if "selected_page" not in st.session_state:
+    st.session_state.selected_page = "Home"
+if "patient_details_entered" not in st.session_state:
+    st.session_state.patient_details_entered = False
+if "prediction_result" not in st.session_state:
+    st.session_state.prediction_result = None
+
+# Function to log out
+def logout():
+    st.session_state.authenticated = False
+    st.session_state.username = ""
+    st.session_state.selected_page = "Home"
+    st.session_state.patient_details_entered = False
+    st.session_state.prediction_result = None
+    st.rerun()
+
+# Login Page
+def login_page():
+    st.title("✨ Welcome ✨")
+    st.markdown("<h3 style='color: #FF6347;'>Login or Sign Up</h3>", unsafe_allow_html=True)
+    users_db = read_users()
+    username_input = st.text_input("Enter your username")
+    
+    if username_input:
+        if username_input in users_db:
+            st.markdown("<h4 style='color: #FF6347;'>Login</h4>", unsafe_allow_html=True)
+            login_password = st.text_input("Enter your password", type='password', max_chars=20)
+            if st.button("Login"):
+                if not login_password:
+                    st.error("❌ Password cannot be empty.")
+                elif users_db[username_input] == login_password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username_input
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid password. Please try again.")
+        else:
+            st.markdown("<h4 style='color: #32CD32;'>Sign Up</h4>", unsafe_allow_html=True)
+            signup_password = st.text_input("Choose a password", type='password', max_chars=20)
+            confirm_password = st.text_input("Confirm your password", type='password', max_chars=20)
+            if st.button("Sign Up"):
+                if not signup_password:
+                    st.error("❌ Password cannot be empty.")
+                elif signup_password != confirm_password:
+                    st.error("❌ Passwords do not match. Please try again.")
+                else:
+                    save_user(username_input, signup_password)
+                    st.success(f"🎉 {username_input} signed up successfully! You can now log in.")
+
+# Dashboard
+def dashboard():
+    st.markdown(f"<h1 style='text-align: center;'>Welcome, {st.session_state.username}!</h1>", unsafe_allow_html=True)
+    col1, col2, col3, col4 = st.columns(4)
+    
+    if col1.button("🏠 Home"):
+        st.session_state.selected_page = "Home"
+    if col2.button("📞 Contact"):
+        st.session_state.selected_page = "Contact"
+    if col3.button("ℹ About"):
+        st.session_state.selected_page = "About"
+    if col4.button("🚪 Logout"):
+        logout()
+
+    if st.session_state.selected_page == "Home":
+        st.header("Welcome to Sepsis Prediction")
+        st.write("Sepsis is a life-threatening condition caused by the body's extreme response to an infection.")
+        if st.button("Predict", key="predict_btn"):
+            st.session_state.selected_page = "PatientDetails"
+            st.rerun()
+
+    if st.session_state.selected_page == "PatientDetails":
+        st.subheader("Enter Patient Details")
+        st.session_state.name = st.text_input("Name")
+        st.session_state.age = st.number_input("Age", min_value=0, step=1)
+        st.session_state.gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+        
+        if st.button("Next", key="next_btn"):
+            if st.session_state.name and st.session_state.age and st.session_state.gender:
+                st.session_state.patient_details_entered = True
+                st.session_state.selected_page = "MedicalDetails"
+                st.rerun()
+            else:
+                st.error("❌ Please enter all patient details before proceeding.")
+
+    if st.session_state.selected_page == "MedicalDetails" and st.session_state.patient_details_entered:
+        st.subheader("Enter Medical Parameters")
+        inputs = [
+            st.number_input("Heart Rate"),
+            st.number_input("Blood Pressure"),
+            st.number_input("Respiratory Rate"),
+            st.number_input("WBC Count"),
+            st.number_input("Temperature"),
+            st.number_input("Lactate"),
+            st.number_input("SpO2"),
+            st.number_input("Platelet Count"),
+            st.number_input("Glucose"),
+            st.number_input("CRP")
+        ]
+
+        if st.button("Submit", key="submit_btn"):
+            if all(inputs):
+                scaled_inputs = scaler.transform([inputs])
+                prediction = model.predict(scaled_inputs)
+                result = "🛑 Positive for Sepsis" if prediction[0] == 1 else "✅ **Negative for Sepsis"
+                
+                # Store result in session state and move to result page
+                st.session_state.prediction_result = result
+                st.session_state.selected_page = "PredictionResult"
+                st.rerun()
+            else:
+                st.error("❌ Please enter all values before submitting.")
+
+    if st.session_state.selected_page == "PredictionResult":
+        show_prediction_page()
+
+# Separate Page for Prediction Result
+
+def show_prediction_page():
+    st.title("🔍 Prediction Result")
+    st.subheader("Based on the input medical parameters, the model predicts:")
+    
+    if st.session_state.prediction_result:
+        is_positive = "Positive" in st.session_state.prediction_result
+        st.markdown(f"<h2 style='color: red;'>{st.session_state.prediction_result}</h2>", unsafe_allow_html=True)
+
+        # If patient is negative for sepsis
+        if not is_positive:
+            st.success("Great news! The patient is not at risk of sepsis.")
+            st.subheader("🛡 Ways to Prevent Sepsis")
+            st.write("""
+            - ✅ Maintain good hygiene (wash hands regularly).  
+            - ✅ Stay hydrated and eat a balanced diet.  
+            - ✅ Get vaccinated for flu, pneumonia, and other infections.  
+            - ✅ Properly clean and care for wounds to avoid infections.  
+            - ✅ Seek medical help immediately if symptoms like fever, confusion, or rapid breathing appear.  
+            """)
+
+        # If patient is positive for sepsis
+        else:
+            st.error("⚠ Immediate medical attention is recommended.")
+            st.subheader("🏥 Steps to Manage & Recover")
+            st.write("""
+            - 🚨 Seek emergency medical care immediately.  
+            - 💧 Stay hydrated and follow a nutrient-rich diet.  
+            - 💊 Antibiotics and IV fluids are essential treatments.  
+            - 🩺 Regular check-ups to monitor recovery and prevent complications.  
+            - 🚶‍♂ Gradually increase activity to regain strength after hospitalization.  
+            """)
+
+    if st.button("🔙 Back to Home", key="back_home_btn"):
+        st.session_state.selected_page = "Home"
+        st.session_state.prediction_result = None
+        st.rerun()
+
+
+    elif st.session_state.selected_page == "About":
+        st.header("ℹ About Sepsis")
+        st.subheader("🔬 What is Sepsis?")
+        st.write("""
+        Sepsis is a *life-threatening* medical condition that occurs when the body's immune system has an extreme response to an infection.  
+        Instead of fighting the infection normally, the body starts attacking its own organs and tissues, which can lead to *organ failure, tissue damage, and even death* if not treated promptly.  
+
+        Sepsis is *not contagious*, but the infections that lead to sepsis can be spread between people.  
+        It is *one of the leading causes of death* in hospitals worldwide, with millions of cases reported annually.
+        """)
+
+        st.subheader("📊 Sepsis Statistics")
+        st.write("""
+        - 🏥 *Globally, sepsis affects over 49 million people annually, leading to 11 million deaths.*  
+        - 🔬 *One in three patients who die in hospitals had sepsis at the time of death.*  
+        - 👶 *Sepsis is a major cause of infant mortality, accounting for nearly 3 million newborn deaths per year.*  
+        - 💰 *Sepsis treatment costs the U.S. healthcare system around $24 billion annually.*  
+        """)
+
+        st.subheader("🦠 Causes of Sepsis")
+        st.write("""
+        Sepsis occurs when an infection spreads throughout the body. Common causes include:
+         - *Bacterial infections* (most common cause)
+         - *Viral infections* (such as COVID-19 or influenza)
+         - *Fungal infections*  
+         - *Parasitic infections* (less common but possible)
+
+        *Types of infections that can lead to sepsis:*
+        - *Lung infections* (Pneumonia, COVID-19, Tuberculosis)
+         - *Urinary Tract Infections (UTIs)*
+         - *Skin infections* (Cellulitis, infected wounds, burns)
+         - *Abdominal infections* (Appendicitis, peritonitis)
+         - *Blood infections* (Bacteremia, septicemia)
+        """)
+        
+        st.subheader("⚠ Risk Factors for Sepsis")
+        st.write("""
+           Some people are at a *higher risk* of developing sepsis than others.  
+        The most vulnerable groups include:
+         - 👶 *Infants & young children* (under 1 year old)
+         - 👴 *Elderly individuals* (over 65 years old)
+         - 💉 *People with weakened immune systems* (cancer, HIV, chemotherapy patients)
+         - 🏥 *Hospitalized patients* (especially those in intensive care units)
+         - 🚑 *People with chronic conditions* (diabetes, kidney disease, liver disease)
+         - 🔪 *People recovering from major surgery or severe injuries*
+         - 🩺 *Patients using medical devices* (catheters, ventilators, dialysis)
+        """)
+
+        st.subheader("🚨 Symptoms of Sepsis")
+        st.write("""
+            The symptoms of sepsis can develop *rapidly* and worsen if untreated.  
+        Doctors often use the *SEPSIS acronym* to recognize the warning signs:
+
+        *S – Shivering, fever, or feeling very cold*  
+        *E – Extreme pain or discomfort*  
+        *P – Pale or discolored skin*  
+        *S – Shortness of breath*  
+        *I – "I feel like I might die" (feeling of impending doom)*  
+        *S – Sleepy, confused, or difficult to wake up*  
+
+        *Other symptoms include:*
+        - *Very low or very high body temperature*
+        - *Rapid heartbeat (tachycardia)*
+        - *Low blood pressure (hypotension)*
+        - *Reduced urine output*
+        - *Dizziness or fainting*
+        """)
+        
+        st.subheader("🏥 How is Sepsis Diagnosed?")
+        st.write("""
+            Doctors diagnose sepsis using *blood tests and vital signs monitoring.*  
+        Common tests include:
+        - *Blood cultures* (to check for bacterial infections)
+        - *Complete Blood Count (CBC)* (to check for abnormal white blood cell levels)
+        - *Lactate levels* (high levels indicate oxygen deprivation)
+        - *C-reactive protein (CRP) test* (indicates inflammation)
+        - *Urinalysis & Imaging (X-rays, CT scans, MRIs)* (to locate the source of infection)
+        """)
+
+        st.subheader("🛡 How to Prevent Sepsis")
+        st.write("""
+        you can lower your risk of sepsis by taking *simple preventive measures*:
+    
+        ✅ *Practice Good Hygiene* – Wash your hands regularly with soap and water.  
+        ✅ *Vaccinations* – Get vaccines for *flu, pneumonia, and COVID-19*.  
+        ✅ *Treat infections early* – Don't ignore symptoms of *UTIs, sore throats, or fevers*.  
+        ✅ *Keep wounds clean* – Properly disinfect cuts and burns to prevent infection.  
+        ✅ *Manage chronic conditions* – Keep diabetes, kidney disease, or heart conditions under control.  
+        ✅ *Avoid self-medication* – Taking the wrong antibiotics can make infections worse.  
+        """)
+
+    elif st.session_state.selected_page == "Contact":
+        st.header("📞 Contact Information")
+        st.write("""
+        - *Email:* support@sepsisapp.com
+        - *Phone:* +1 234 567 890
+        - *Address:* 123 Healthcare Street, Medical City
+        - *Support Hours:* Mon-Fri (9 AM - 6 PM)
+        """)
+
+if not st.session_state.authenticated:
+    login_page()
+else:
+    dashboard()
